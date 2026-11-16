@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Watch three cellular automata with five-cell worms compete for food on the same seed.">
+  <title>Automaton Worm</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./main.js"></script>
+</head>
+<body>
+  <main class="workspace">
+    <header class="toolbar">
+      <h1>Automaton Worm</h1>
+      <div class="controls" role="group" aria-label="Simulation controls">
+        <button id="play" type="button" title="Play" aria-label="Play" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="play" d="M7 4.5 20 12 7 19.5Z" fill="currentColor"/><path class="pause" d="M9 5v14m6-14v14" stroke-width="3"/></svg>
+        </button>
+        <button id="step" type="button" title="Step" aria-label="Step" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 4.5 16.5 12l-12 7.5Z M20 4.5v15"/></svg>
+        </button>
+        <button id="reset" type="button" title="Reset" aria-label="Reset" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10a8 8 0 1 0-1.9 7.4M20 4.5V10h-5.5"/></svg>
+        </button>
+      </div>
+      <button id="settings" type="button" title="Settings" aria-label="Settings" popovertarget="settings-panel" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 3-.6 2.6-1.7.9-2.6-.8-2 3.5 2 1.8v2l-2 1.8 2 3.5 2.6-.8 1.7.9L10 21h4l.6-2.6 1.7-.9 2.6.8 2-3.5-2-1.8v-2l2-1.8-2-3.5-2.6.8-1.7-.9L14 3z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
+    </header>
+
+    <p id="error" class="error" role="alert" hidden></p>
+    <div class="simulation">
+      <section class="board" aria-label="Worm arena">
+        <canvas id="arena" width="1" height="1" tabindex="0" role="img" aria-label="Autonomous worm grid" aria-describedby="cell-help" aria-controls="cell-inspector"></canvas>
+        <footer class="board-footer">
+          <div id="legend" class="legend" aria-label="Grid legend">
+            <span class="key food">Food</span>
+            <span class="key request room-key" hidden>Request</span>
+            <span class="key forwarded room-key" hidden>Forwarded</span>
+            <span class="key yielded room-key" hidden>Yielded</span>
+          </div>
+          <span id="dimensions"></span>
+        </footer>
+      </section>
+
+      <aside class="details">
+        <section class="card">
+          <div class="card-title">
+            <h2>Make room</h2>
+            <span id="progress">Loading…</span>
+          </div>
+          <table id="comparison">
+            <thead><tr><td></td><th scope="col" data-mode="off">Off</th><th scope="col" data-mode="direct">Direct</th><th scope="col" data-mode="wave">Wave</th></tr></thead>
+            <tbody>
+              <tr data-metric="food"><th scope="row">Pellets eaten</th><td>—</td><td>—</td><td>—</td></tr>
+              <tr data-metric="blocked"><th scope="row">Blocked rounds</th><td>—</td><td>—</td><td>—</td></tr>
+              <tr data-metric="averageRounds"><th scope="row">Mean wait</th><td>—</td><td>—</td><td>—</td></tr>
+              <tr data-metric="p90Rounds"><th scope="row">90th percentile wait</th><td>—</td><td>—</td><td>—</td></tr>
+              <tr data-metric="longestCompletedRounds"><th scope="row">Longest resolved wait</th><td>—</td><td>—</td><td>—</td></tr>
+              <tr data-metric="stillStuck"><th scope="row">Worms still stuck</th><td>—</td><td>—</td><td>—</td></tr>
+              <tr data-metric="longestStuckRounds"><th scope="row">Longest ongoing wait</th><td>—</td><td>—</td><td>—</td></tr>
+            </tbody>
+          </table>
+          <p class="note">Waits are measured in rounds.</p>
+        </section>
+
+        <section id="cell-inspector" class="card">
+          <div class="card-title">
+            <h2 id="cell-title">Cell inspector</h2>
+            <span id="cell-phase"></span>
+          </div>
+          <p id="cell-help" class="note">Select a cell on the grid or use the arrow keys.</p>
+          <div id="cell-details" hidden>
+            <dl class="cell-summary">
+              <dt>Occupant</dt><dd id="cell-role"></dd>
+              <dt>Food scent</dt><dd id="cell-scent"></dd>
+              <dt>Food</dt><dd id="cell-food"></dd>
+              <dt>Move</dt><dd id="cell-move"></dd>
+              <dt>Memory</dt><dd id="cell-memory"></dd>
+              <dt>Report</dt><dd id="cell-report"></dd>
+            </dl>
+            <table id="cell-ports">
+              <thead><tr><th scope="col">Port</th><th scope="col">Inbox</th><th scope="col">Outbox</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">West</th><td></td><td></td></tr>
+                <tr><th scope="row">East</th><td></td><td></td></tr>
+                <tr><th scope="row">North</th><td></td><td></td></tr>
+                <tr><th scope="row">South</th><td></td><td></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <details id="rule-table">
+            <summary>Cell rules <span id="rule-version"></span></summary>
+            <ol class="rule-notes">
+              <li>Open cells spread food scent. The scent fades with distance and after a pellet is eaten.</li>
+              <li>Worm ends request space tickets. An open cell grants at most one ticket per round.</li>
+              <li>When both ends are blocked, a worm can ask a neighbor to move. Wave mode lets a blocked recipient forward the request.</li>
+              <li>Every grid cell runs the same rule, including cells with pellets and cells in the background.</li>
+            </ol>
+            <div class="rule-scroll" tabindex="0" aria-label="Compiled rule rows">
+              <table aria-label="Cell rules by register">
+                <thead><tr><th scope="col">Row</th><th scope="col">Op</th><th scope="col">Dst</th><th scope="col">A</th><th scope="col">B</th><th scope="col">C</th></tr></thead>
+                <tbody id="rule-rows"></tbody>
+              </table>
+            </div>
+            <p class="note">Registers 2–5 are inboxes, 6–9 are memory, 10–13 are outboxes, and 14 is the report.</p>
+            <p class="note">Lookup words <code id="rule-lookup"></code></p>
+          </details>
+        </section>
+      </aside>
+    </div>
+
+    <section id="settings-panel" popover aria-labelledby="settings-title">
+      <h2 id="settings-title">Settings</h2>
+      <form id="settings-form">
+        <fieldset id="settings-fields" disabled>
+          <label class="setting">
+            <span>Simulation engine</span>
+            <select id="engine">
+              <option value="mlp">Optimized MLP</option>
+              <option value="table">Compiled table</option>
+            </select>
+          </label>
+          <label class="setting">
+            <span>Display arena</span>
+            <select id="mode">
+              <option value="off">Off</option>
+              <option value="direct" selected>Direct</option>
+              <option value="wave">Wave</option>
+            </select>
+          </label>
+          <label class="setting"><span>Grid size</span>
+            <input id="size" type="number" min="6" max="128" value="100" step="1">
+          </label>
+          <div class="setting seed-setting">
+            <label for="seed">Seed</label>
+            <input id="seed" type="number" min="0" max="4294967295" value="17001" step="1">
+            <button id="new-seed" type="button" title="New seed" aria-label="New seed">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 8.5h.01m3.49 3.5h.01m3.49 3.5h.01" stroke-width="2.5"/></svg>
+            </button>
+          </div>
+          <label class="setting slider"><span>Worms</span><output id="worm-count-value" for="worm-count">3</output>
+            <input id="worm-count" type="range" min="1" max="1000" value="3">
+          </label>
+          <label class="setting slider"><span>Food pellets</span><output id="pellet-count-value" for="pellet-count">12</output>
+            <input id="pellet-count" type="range" min="1" max="32" value="12">
+          </label>
+          <label class="setting slider"><span>Playback speed</span><output id="speed-value" for="speed">1×</output>
+            <input id="speed" type="range" min="0" max="7" value="2">
+          </label>
+          <label class="setting slider"><span>Zoom</span><output id="zoom-value" for="zoom">100%</output>
+            <input id="zoom" type="range" min="100" max="800" value="100">
+          </label>
+          <label class="setting toggle"><input id="scent" type="checkbox"><span>Show food scent</span></label>
+          <label class="setting toggle"><input id="room" type="checkbox"><span>Show make-room signals</span></label>
+        </fieldset>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

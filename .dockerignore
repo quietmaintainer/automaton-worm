@@ -1,0 +1,17 @@
+*
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!build.rs
+!build/
+!build/**
+!src/
+!src/**
+!rules/
+!rules/**
+!web/
+!web/**
+!scripts/
+!scripts/build-web.py
+!LICENSE
+!NOTICE

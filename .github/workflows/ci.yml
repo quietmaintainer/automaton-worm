@@ -1,0 +1,41 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust components and Wasm CLI
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --target wasm32-unknown-unknown --component rustfmt --component clippy
+          cargo install --locked wasm-bindgen-cli --version 0.2.130
+      - name: Check Rust and compare frozen replays
+        run: |
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo clippy --locked --target wasm32-unknown-unknown --lib -- -D warnings
+          cargo test --locked
+          python3 scripts/check-replays.py
+      - name: Build static site
+        run: python3 scripts/build-web.py
+      - name: Smoke test browser
+        run: |
+          npm install --global @playwright/cli@0.1.24
+          playwright-cli install-browser chrome
+          preview="$RUNNER_TEMP/worm-preview"
+          mkdir -p "$preview/automaton-worm"
+          cp -a dist/. "$preview/"
+          cp -a dist/. "$preview/automaton-worm/"
+          python3 -m http.server 8080 --bind 127.0.0.1 --directory "$preview" &
+          server=$!
+          trap 'playwright-cli -s=worm-ci close || true; kill "$server"' EXIT
+          curl --retry 5 --retry-connrefused --fail --silent --output /dev/null http://127.0.0.1:8080/
+          playwright-cli -s=worm-ci open http://127.0.0.1:8080/ --browser=chrome
+          playwright-cli -s=worm-ci run-code --filename=scripts/smoke-browser.js

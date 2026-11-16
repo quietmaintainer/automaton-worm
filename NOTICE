@@ -1,0 +1,8 @@
+Automaton Worm extracts the Autonomous CA arena, cell-rule engine, integer MLP
+compiler, and worm rendering from automaton-swarm.
+
+The original source credits Automata Core for the seeded 32-bit generator and
+its shuffle index selection. That credit is preserved in src/world.rs.
+
+Before a public release, confirm the Automata Core source and its license and
+carry forward any required notices. Confirm the copyright holder in LICENSE.

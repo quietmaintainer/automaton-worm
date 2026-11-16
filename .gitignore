@@ -1,0 +1,5 @@
+/target/
+/dist/
+/.site-*/
+/.playwright-cli/
+__pycache__/
