@@ -1,7 +1,21 @@
 async page => {
-  const origin = new URL(page.url()).origin;
-  const docker = new URL(page.url()).searchParams.has('docker');
-  const paths = docker ? ['/'] : ['/', '/automaton-worm/'];
+  const url = new URL(page.url());
+  const { origin, pathname } = url;
+  const paths = url.searchParams.has('docker') || pathname !== '/' ? [pathname] : ['/', '/automaton-worm/'];
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  // Read the coordinator's real frames without relying on canvas rasterization.
+  await page.addInitScript(() => {
+    window.Worker = class extends window.Worker {
+      constructor(url, options) {
+        super(url, options);
+        if (new URL(url, location.href).pathname.endsWith('/worker.js')) {
+          this.addEventListener('message', ({ data }) => {
+            if (data.frame) window.wormTestFrame = data.frame;
+          });
+        }
+      }
+    };
+  });
   const storageKey = 'automaton-worm:settings:v1';
   const failures = [];
   page.on('pageerror', error => failures.push(error.message));
@@ -16,6 +30,13 @@ async page => {
   async function ready(tick) {
     await page.waitForFunction(expected => document.querySelector('#progress').dataset.tick === String(expected)
       && !document.querySelector('#settings').disabled, tick);
+  }
+
+  async function arenaState() {
+    return page.evaluate(() => {
+      const { bodies, headings, pellets } = window.wormTestFrame;
+      return { bodies: [...bodies], headings: [...headings], pellets: [...pellets] };
+    });
   }
 
   async function canvasImage() {
@@ -71,10 +92,10 @@ async page => {
     check(await page.locator('#dimensions').textContent() === '100 × 100', 'Wrong default grid');
     check(await displayedMode() === 'Direct', 'Wrong default arena');
     check(await page.getByRole('button', { name: 'Play', exact: true }).isEnabled(), 'Expected initial pause');
-    const initial = await canvasImage();
+    const initial = JSON.stringify(await arenaState());
     await step.click();
     await ready(1);
-    const before = await canvasImage();
+    const before = JSON.stringify(await arenaState());
     const metrics = await page.locator('#comparison').innerText();
 
     await settings.click();
@@ -84,7 +105,7 @@ async page => {
     check(await page.locator('#pellet-count').inputValue() === '32', 'Wrong default pellet count');
     await engine.selectOption('table');
     await ready(1);
-    check(await canvasImage() === before, 'Engine switch changed the displayed cells');
+    check(JSON.stringify(await arenaState()) === before, 'Engine switch changed the displayed cells');
     check(await seed.inputValue() === '17001', 'Engine switch changed the seed');
     check(await page.locator('#comparison').innerText() === metrics, 'Engine switch changed the scores');
     await mode.selectOption('wave');
@@ -98,14 +119,15 @@ async page => {
     await ready(2);
     await reset.click();
     await ready(0);
-    check(await canvasImage() === initial, 'Reset did not reproduce the seed');
+    check(JSON.stringify(await arenaState()) === initial, 'Reset did not reproduce the seed');
     await page.reload();
     await ready(0);
     await settings.click();
     check(await engine.inputValue() === 'table', 'Engine selection did not persist');
+    const beforeScent = await canvasImage();
     await page.getByLabel('Show food scent', { exact: true }).check();
     await ready(0);
-    check(await canvasImage() !== initial, 'Food scent overlay had no effect');
+    check(await canvasImage() !== beforeScent, 'Food scent overlay had no effect');
     await page.getByLabel('Show make-room signals', { exact: true }).check();
     await ready(0);
     check(await page.locator('#legend .forwarded').isVisible(), 'Room signal overlay did not enable');
@@ -142,9 +164,12 @@ async page => {
     check(await page.locator('#worm-count').inputValue() === '1000', 'Saved worm count did not persist');
     check(await page.locator('#pellet-count').inputValue() === '12', 'Saved pellet count did not persist');
 
-    const served = await page.request.head(origin + path + 'pkg/worm_bg.wasm');
-    check(served.ok(), 'Wasm failed to load under ' + path);
-    check(served.headers()['content-type'].includes('application/wasm'), 'Wrong Wasm MIME type');
+    const served = await page.evaluate(async url => {
+      const response = await fetch(url, { method: 'HEAD' });
+      return { ok: response.ok, contentType: response.headers.get('content-type') };
+    }, origin + path + 'pkg/worm_bg.wasm');
+    check(served.ok, 'Wasm failed to load under ' + path);
+    check(served.contentType?.includes('application/wasm'), 'Wrong Wasm MIME type');
   }
 
   await page.evaluate(key => localStorage.setItem(key, '{invalid'), storageKey);
