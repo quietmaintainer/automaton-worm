@@ -1,8 +1,9 @@
-Automaton Worm extracts the Autonomous CA arena, cell-rule engine, integer MLP
-compiler, and worm rendering from automaton-swarm.
+Automaton Worm extracts its Autonomous CA arena, rule engine, integer MLP
+compiler, and rendering from automaton-swarm.
 
-The original source credits Automata Core for the seeded 32-bit generator and
-its shuffle index selection. That credit is preserved in src/world.rs.
+The seeded 32-bit generator is Tommy Ettinger's Mulberry32, released under
+CC0 1.0. The Rust implementation uses Automata Core's bounded-index selection.
+Original generator and license
+https://gist.github.com/tommyettinger/46a874533244883189143505d203312c
 
-Before a public release, confirm the Automata Core source and its license and
-carry forward any required notices. Confirm the copyright holder in LICENSE.
+The bundled WebAssembly dependencies are credited in THIRD_PARTY_NOTICES.

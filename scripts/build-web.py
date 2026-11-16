@@ -56,7 +56,7 @@ def main():
                         "--no-typescript", artifact], check=True)
         for name in ASSETS:
             shutil.copyfile(ROOT / "web" / name, site / name)
-        for name in ("LICENSE", "NOTICE"):
+        for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES"):
             shutil.copyfile(ROOT / name, site / name)
         (site / ".nojekyll").touch()
         if dist.is_symlink() or dist.resolve() != dist:

@@ -10,7 +10,7 @@ RUN --mount=type=secret,id=build_ca \
     && rustup target add wasm32-unknown-unknown \
     && cargo install --locked wasm-bindgen-cli --version 0.2.130
 WORKDIR /app
-COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs LICENSE NOTICE ./
+COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs LICENSE NOTICE THIRD_PARTY_NOTICES ./
 COPY build ./build
 COPY src ./src
 COPY rules ./rules

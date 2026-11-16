@@ -2,7 +2,7 @@ import { ENGINE_LABELS, PLAYBACK_SPEEDS, ROOM_MODES } from './shared.js';
 
 const KEY = 'automaton-worm:settings:v1';
 const DEFAULTS = {
-  size: 100, seed: 17001, wormCount: 3, pelletCount: 12,
+  size: 100, seed: 17001, wormCount: 100, pelletCount: 32,
   mode: 'direct', engine: 'mlp', speed: 1, zoom: 100, scent: false, room: false,
 };
 

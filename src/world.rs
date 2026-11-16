@@ -6,7 +6,7 @@ use crate::RuleTable;
 pub const PORTS: usize = 4;
 pub const MEMORY_WORDS: usize = 4;
 
-// Automata Core's 32-bit generator, including its shuffle index selection.
+// Tommy Ettinger's CC0 Mulberry32 with Automata Core's bounded-index selection.
 pub(crate) fn random_index(state: &mut u32, limit: usize) -> usize {
     *state = state.wrapping_add(0x6d2b_79f5);
     let mut value = (*state ^ (*state >> 15)).wrapping_mul(*state | 1);

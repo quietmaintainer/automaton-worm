@@ -24,6 +24,36 @@ async page => {
     }));
   }
 
+  async function checkZoomedPointer() {
+    const canvas = page.locator('#arena');
+    await canvas.scrollIntoViewIfNeeded();
+    const { x, y, width, height } = await canvas.boundingBox();
+    const startX = x + width / 2;
+    const startY = y + height / 2;
+    const cellTitle = page.locator('#cell-title');
+
+    await page.mouse.click(startX, startY);
+    await page.locator('#cell-details').waitFor({ state: 'visible' });
+    const selected = await cellTitle.textContent();
+    const afterClick = await canvasImage();
+    await page.mouse.move(startX + 45, startY + 15, { steps: 3 });
+    check(await canvasImage() === afterClick, 'Mouse movement panned the zoomed grid after a cell click');
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + 45, startY + 15, { steps: 3 });
+    await page.mouse.up();
+    const afterDrag = await canvasImage();
+    check(afterDrag !== afterClick, 'Dragging did not pan the zoomed grid');
+    check(await cellTitle.textContent() === selected, 'Dragging changed the selected cell');
+    await page.mouse.move(startX + 75, startY + 30, { steps: 3 });
+    check(await canvasImage() === afterDrag, 'Mouse movement continued panning after a drag ended');
+
+    await page.mouse.click(startX - 65, startY);
+    await page.waitForFunction(title => document.querySelector('#cell-title').textContent !== title, selected);
+  }
+
+
   const settings = page.getByRole('button', { name: 'Settings', exact: true });
   const step = page.getByRole('button', { name: 'Step', exact: true });
   const reset = page.getByRole('button', { name: 'Reset', exact: true });
@@ -50,8 +80,8 @@ async page => {
     await settings.click();
     check(await engine.inputValue() === 'mlp', 'Wrong default engine');
     check(await seed.inputValue() === '17001', 'Wrong default seed');
-    check(await page.locator('#worm-count').inputValue() === '3', 'Wrong default worm count');
-    check(await page.locator('#pellet-count').inputValue() === '12', 'Wrong default pellet count');
+    check(await page.locator('#worm-count').inputValue() === '100', 'Wrong default worm count');
+    check(await page.locator('#pellet-count').inputValue() === '32', 'Wrong default pellet count');
     await engine.selectOption('table');
     await ready(1);
     check(await canvasImage() === before, 'Engine switch changed the displayed cells');
@@ -83,7 +113,9 @@ async page => {
     await ready(0);
     check(await page.locator('#speed-value').textContent() === 'Max', 'Max playback could not be selected');
 
+    await page.locator('#zoom').fill('200');
     await page.keyboard.press('Escape');
+    await checkZoomedPointer();
     await page.getByRole('button', { name: 'Play', exact: true }).click();
     await page.waitForFunction(() => Number(document.querySelector('#progress').dataset.tick) >= 48);
     await page.getByRole('button', { name: 'Pause', exact: true }).click();
@@ -101,12 +133,16 @@ async page => {
     check(await seed.inputValue() !== firstSeed, 'New seed did not update the seed');
     await page.locator('#worm-count').fill('1000');
     await ready(0);
-    await page.locator('#pellet-count').fill('32');
-    await ready(0);
     check(await page.locator('#worm-count').inputValue() === '1000', 'Could not spawn 1,000 worms');
-    check(await page.locator('#pellet-count').inputValue() === '32', 'Could not spawn 32 pellets');
+    await page.locator('#pellet-count').fill('12');
+    await ready(0);
+    await page.reload();
+    await ready(0);
+    await settings.click();
+    check(await page.locator('#worm-count').inputValue() === '1000', 'Saved worm count did not persist');
+    check(await page.locator('#pellet-count').inputValue() === '12', 'Saved pellet count did not persist');
 
-    const served = await page.request.get(origin + path + 'pkg/worm_bg.wasm');
+    const served = await page.request.head(origin + path + 'pkg/worm_bg.wasm');
     check(served.ok(), 'Wasm failed to load under ' + path);
     check(served.headers()['content-type'].includes('application/wasm'), 'Wrong Wasm MIME type');
   }
@@ -134,5 +170,5 @@ async page => {
   }
 
   check(failures.length === 0, failures.join('\n'));
-  return { paths, controls: 'passed', storage: 'passed', synchronizedPlayback: 'passed', wasmMime: 'passed' };
+  return { paths, controls: 'passed', storage: 'passed', synchronizedPlayback: 'passed', wasmMime: 'passed', zoomedPointer: 'passed' };
 }

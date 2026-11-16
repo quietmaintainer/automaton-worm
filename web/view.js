@@ -178,6 +178,7 @@ export function connectView(canvas, { onSelect, onZoom }) {
   let animation;
   let pendingPaint = 0;
   let drag;
+  let suppressClick = false;
 
   function transform() {
     const unit = Math.max(1, Math.min(canvas.width, canvas.height) - 2) * zoom / (100 * size);
@@ -269,24 +270,33 @@ export function connectView(canvas, { onSelect, onZoom }) {
     onZoom(zoom);
   });
   canvas.addEventListener('pointerdown', event => {
-    drag = undefined;
-    if (size && zoom > 100 && event.button === 0) {
-      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, centerX, centerY, moved: false };
-    }
+    if (!event.isPrimary || event.button !== 0) return;
+    suppressClick = false;
+    if (!size || zoom === 100) return;
+    drag = { id: event.pointerId, x: event.clientX, y: event.clientY, centerX, centerY };
+    canvas.setPointerCapture(event.pointerId);
   });
   canvas.addEventListener('pointermove', event => {
-    if (drag?.id !== event.pointerId) return;
+    if (drag?.id !== event.pointerId || !(event.buttons & 1)) return;
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
-    if (!drag.moved && Math.hypot(dx, dy) < 5) return;
-    drag.moved = true;
-    canvas.setPointerCapture(event.pointerId);
+    if (!suppressClick && Math.hypot(dx, dy) < 5) return;
+    suppressClick = true;
     const rect = canvas.getBoundingClientRect();
     pan(drag.centerX - dx * 100 / (rect.width * zoom), drag.centerY - dy * 100 / (rect.height * zoom));
   });
-  canvas.addEventListener('pointercancel', () => { drag = undefined; });
+  function finishDrag({ pointerId }) {
+    if (drag?.id === pointerId) drag = undefined;
+  }
+  canvas.addEventListener('pointerup', finishDrag);
+  canvas.addEventListener('pointercancel', finishDrag);
+  canvas.addEventListener('lostpointercapture', finishDrag);
   canvas.addEventListener('click', event => {
-    if (!size || drag?.moved) return;
+    if (suppressClick) {
+      suppressClick = false;
+      return;
+    }
+    if (!size) return;
     const p = point(event);
     if (p.x >= 0 && p.x < 1 && p.y >= 0 && p.y < 1) {
       onSelect(Math.floor(p.y * size) * size + Math.floor(p.x * size));
@@ -301,6 +311,8 @@ export function connectView(canvas, { onSelect, onZoom }) {
       animation = undefined;
       centerX = centerY = .5;
       selection = null;
+      drag = undefined;
+      suppressClick = false;
       setZoom(percent);
     },
     setZoom,

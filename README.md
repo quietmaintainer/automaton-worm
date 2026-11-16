@@ -11,6 +11,8 @@ The optimized integer MLP is the default. It is programmed from the same rule
 table as the compiled table engine. Switch engines in Settings to compare them
 during the same run.
 
+Try the [live demo](https://quietmaintainer.github.io/automaton-worm/) in your browser.
+
 ## Run locally
 
 For a checkout with a built `dist/`, serve it from the project directory.
@@ -56,7 +58,7 @@ static site.
 ## Controls
 
 - **Play/Pause**, **Step** one tick, or **Reset** to the current seed. The first
-  run opens paused on a 100×100 grid with 3 worms and 12 food pellets.
+  run opens paused on a 100×100 grid with 100 worms and 32 food pellets.
 - Open **Settings** to pause and choose an engine, the displayed arena, a new
   seed, population, zoom, or overlays. The grid grows as needed for up to 1,000
   worms. A round takes 24 ticks. Max starts the next round as soon as the worker
@@ -103,16 +105,20 @@ npx --package @playwright/cli@0.1.24 playwright-cli -s=worm-bench run-code --fil
 npx --package @playwright/cli@0.1.24 playwright-cli -s=worm-bench close
 ~~~
 
-## Publish after review
+## Deploy and release
 
-1. Review the source credits in [NOTICE](NOTICE) and confirm the copyright
-   line in [LICENSE](LICENSE).
-2. Push `main` to a GitHub repository named `automaton-worm`. In **Settings →
-   Pages**, choose **GitHub Actions** as the source, then run the **GitHub Pages**
-   workflow. The project site uses the path `/automaton-worm/`.
-3. Push a version tag such as `v0.1.0`. The **Release** workflow publishes a
-   static ZIP under GitHub Releases and an amd64/arm64 image in GHCR. Set the
-   GHCR package to public for anonymous pulls and verify the tagged image.
+GitHub Actions builds and deploys the demo from main. To host a fork, choose
+**GitHub Actions** in **Settings → Pages**, then run the **GitHub Pages**
+workflow. The live site uses the repository name as its URL path.
+
+A version tag such as v0.1.0 triggers the **Release** workflow. It publishes a
+static ZIP under GitHub Releases and an amd64/arm64 image in GHCR. To allow
+anonymous pulls, set the GHCR package to public.
 
 [Pages deployment](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages) ·
 [Container registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+
+## License
+
+Automaton Worm is distributed under the [MIT license](LICENSE). See [NOTICE](NOTICE)
+for source credits and [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES) for the Wasm dependencies.
