@@ -79,13 +79,13 @@ pub struct CellState {
 pub(crate) type CellInput = (u32, [u32; PORTS], CellState);
 
 #[derive(Clone, Debug)]
-pub struct World {
+pub struct World<C = CellState> {
     pub(crate) sites: Vec<Site>,
-    pub(crate) initial: Vec<CellState>,
+    pub(crate) initial: Vec<C>,
 }
 
-impl World {
-    pub fn new(sites: Vec<Site>, initial: Vec<CellState>) -> Result<Self> {
+impl<C> World<C> {
+    pub fn new(sites: Vec<Site>, initial: Vec<C>) -> Result<Self> {
         ensure!(!sites.is_empty(), "a world needs at least one site");
         ensure!(sites.len() <= u32::MAX as usize, "too many sites");
         ensure!(
@@ -105,12 +105,7 @@ impl World {
     }
 
     /// Ports are west, east, north, south. Grid boundaries supply zero.
-    pub fn grid(
-        width: usize,
-        height: usize,
-        inputs: &[u32],
-        initial: Vec<CellState>,
-    ) -> Result<Self> {
+    pub fn grid(width: usize, height: usize, inputs: &[u32], initial: Vec<C>) -> Result<Self> {
         ensure!(width > 0 && height > 0, "grid dimensions must be positive");
         ensure!(
             width.checked_mul(height) == Some(inputs.len()),
@@ -141,7 +136,7 @@ impl World {
         &self.sites
     }
 
-    pub fn initial(&self) -> &[CellState] {
+    pub fn initial(&self) -> &[C] {
         &self.initial
     }
 }

@@ -1,9 +1,18 @@
+import { createWormGpu } from './worm-gpu.js';
+
 const boardBackground = '#0e1620';
 const wormColors = ['#4dd9c2', '#bd9dfa', '#fa8aa3', '#81b8ff'];
 const foodColor = '#ffc56d';
 const roomColors = { request: '#ffdd8a', forwarded: '#6be8f4', yielded: '#a4f18c' };
 const headingOffsets = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 const WORM_LENGTH = 5;
+const vacancyColor = '#65dfcb';
+const reservationColor = '#bd9dfa';
+const wormStyle = {
+  length: WORM_LENGTH, colors: wormColors, background: boardBackground, food: foodColor,
+  linkRadius: .17, bodyRadius: .31, headRadius: .43, centerRadius: .13,
+  eyeRadius: .105, eyeOffset: .23, pelletRadius: .42,
+};
 
 function gridPath(size) {
   const path = new Path2D();
@@ -65,13 +74,14 @@ function circle(path, x, y, radius) {
 
 function drawPellets(context, pellets, size) {
   const path = new Path2D();
+  const radius = wormStyle.pelletRadius;
   for (const cell of pellets) {
     const x = cell % size + .5;
     const y = Math.floor(cell / size) + .5;
-    path.moveTo(x, y - .42);
-    path.lineTo(x + .42, y);
-    path.lineTo(x, y + .42);
-    path.lineTo(x - .42, y);
+    path.moveTo(x, y - radius);
+    path.lineTo(x + radius, y);
+    path.lineTo(x, y + radius);
+    path.lineTo(x - radius, y);
     path.closePath();
   }
   context.fillStyle = foodColor;
@@ -92,25 +102,30 @@ function drawWorms(context, { bodies, headings, yieldedWorms }, size, sources, p
     const headY = Math.floor(bodies[start] / size);
     if (headX < bounds.left - WORM_LENGTH || headX > bounds.right + WORM_LENGTH
       || headY < bounds.top - WORM_LENGTH || headY > bounds.bottom + WORM_LENGTH) continue;
+    const yielded = yielding.has(worm);
     for (let part = 0; part < WORM_LENGTH; part++) {
       const cell = bodies[start + part];
-      const prior = sources?.[start + part] ?? cell;
-      const x = .5 + (prior % size) * (1 - progress) + (cell % size) * progress;
-      const y = .5 + Math.floor(prior / size) * (1 - progress) + Math.floor(cell / size) * progress;
+      let x = .5 + cell % size;
+      let y = .5 + Math.floor(cell / size);
+      if (sources) {
+        const prior = sources[start + part];
+        x += (1 - progress) * (.5 + prior % size - x);
+        y += (1 - progress) * (.5 + Math.floor(prior / size) - y);
+      }
       if (part === 0) {
         chains[color].moveTo(x, y);
-        if (yielding.has(worm)) {
+        if (yielded) {
           yieldLines.moveTo(x, y);
           circle(yieldHeads, x, y, .55);
         }
         const [dx, dy] = headingOffsets[headings[worm]];
-        circle(segments[color], x, y, .43);
-        circle(centers, x + dx * .23, y + dy * .23, .105);
+        circle(segments[color], x, y, wormStyle.headRadius);
+        circle(centers, x + dx * wormStyle.eyeOffset, y + dy * wormStyle.eyeOffset, wormStyle.eyeRadius);
       } else {
         chains[color].lineTo(x, y);
-        if (yielding.has(worm)) yieldLines.lineTo(x, y);
-        circle(segments[color], x, y, .31);
-        circle(centers, x, y, .13);
+        if (yielded) yieldLines.lineTo(x, y);
+        circle(segments[color], x, y, wormStyle.bodyRadius);
+        circle(centers, x, y, wormStyle.centerRadius);
       }
     }
   }
@@ -122,7 +137,7 @@ function drawWorms(context, { bodies, headings, yieldedWorms }, size, sources, p
     context.stroke(yieldLines);
     context.fill(yieldHeads);
   }
-  context.lineWidth = .34;
+  context.lineWidth = 2 * wormStyle.linkRadius;
   for (const [index, color] of wormColors.entries()) {
     context.strokeStyle = context.fillStyle = color;
     context.stroke(chains[index]);
@@ -164,6 +179,23 @@ function drawRoomSignals(context, signals, size, unit, color, pixel) {
   context.stroke();
 }
 
+function drawReservations(context, paths, size, unit) {
+  if (!paths?.length) return;
+  context.beginPath();
+  for (let i = 0; i < paths.length;) {
+    const stop = i + 1 + paths[i];
+    const start = paths[++i];
+    context.moveTo(start % size + .5, Math.floor(start / size) + .5);
+    for (i++; i < stop; i++) {
+      const cell = paths[i];
+      context.lineTo(cell % size + .5, Math.floor(cell / size) + .5);
+    }
+  }
+  context.strokeStyle = reservationColor;
+  context.lineWidth = Math.max(.18, 1 / unit);
+  context.stroke();
+}
+
 export function connectView(canvas, { onSelect, onZoom }) {
   const context = canvas.getContext('2d', { alpha: false });
   const scent = scentLayer();
@@ -179,6 +211,7 @@ export function connectView(canvas, { onSelect, onZoom }) {
   let pendingPaint = 0;
   let drag;
   let suppressClick = false;
+  let wormGpu;
 
   function transform() {
     const unit = Math.max(1, Math.min(canvas.width, canvas.height) - 2) * zoom / (100 * size);
@@ -187,6 +220,24 @@ export function connectView(canvas, { onSelect, onZoom }) {
       x: canvas.width / 2 - centerX * size * unit,
       y: canvas.height / 2 - centerY * size * unit,
     };
+  }
+
+  function paintFormation(width, height, camera) {
+    if (wormGpu === undefined) {
+      try { wormGpu = createWormGpu(wormStyle); }
+      catch { wormGpu = null; }
+    }
+    if (!wormGpu) return false;
+    const layer = wormGpu(frame, size, width, height, camera);
+    if (!layer) {
+      wormGpu = null;
+      return false;
+    }
+    context.save();
+    context.resetTransform();
+    context.drawImage(layer, 0, 0);
+    context.restore();
+    return true;
   }
 
   function paint(now) {
@@ -203,7 +254,8 @@ export function connectView(canvas, { onSelect, onZoom }) {
     context.fillRect(0, 0, width, height);
     if (!frame) return;
 
-    const { unit, x, y } = transform();
+    const camera = transform();
+    const { unit, x, y } = camera;
     context.setTransform(unit, 0, 0, unit, x, y);
     if (frame.scent) {
       context.imageSmoothingEnabled = false;
@@ -213,12 +265,16 @@ export function connectView(canvas, { onSelect, onZoom }) {
     context.lineWidth = Math.min(.2, 1 / unit);
     context.stroke(grid);
     const progress = animation ? Math.max(0, Math.min(1, (now - animation.start) / animation.duration)) : 1;
-    drawPellets(context, progress < .8 ? animation.previous.pellets : frame.pellets, size);
-    drawWorms(context, frame, size, animation?.sources, progress, {
-      left: -x / unit, right: (width - x) / unit, top: -y / unit, bottom: (height - y) / unit,
-    });
+    if (!(frame.formation && progress === 1 && paintFormation(width, height, camera))) {
+      drawPellets(context, progress < .8 ? animation.previous.pellets : frame.pellets, size);
+      drawWorms(context, frame, size, animation?.sources, progress, {
+        left: -x / unit, right: (width - x) / unit, top: -y / unit, bottom: (height - y) / unit,
+      });
+    }
     drawRoomSignals(context, frame.roomSignals, size, unit, roomColors.request, pixel);
     drawRoomSignals(context, frame.forwardedRoomSignals, size, unit, roomColors.forwarded, pixel);
+    drawRoomSignals(context, frame.vacancy, size, unit, vacancyColor, pixel);
+    drawReservations(context, frame.reservations, size, unit);
     if (selection != null) {
       context.strokeStyle = wormColors[0];
       context.lineWidth = Math.min(.22, Math.max(.1, 1.75 * pixel / unit));
@@ -321,7 +377,7 @@ export function connectView(canvas, { onSelect, onZoom }) {
       redraw();
     },
     show(next, duration = 0) {
-      animation = duration && frame && !reducedMotion.matches ? {
+      animation = duration && frame && (!next.formation || zoom > 200) && !reducedMotion.matches ? {
         start: performance.now(), duration, previous: frame, sources: wormStepSources(next.bodies, frame.bodies),
       } : undefined;
       frame = next;

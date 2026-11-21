@@ -1,4 +1,4 @@
-import { PLAYBACK_SPEEDS, ROOM_MODES } from './shared.js';
+import { FORMATION_MODE, PLAYBACK_SPEEDS, ROOM_MODES, SEQUENCE_RESET_MS, SEQUENCE_RULE_MS, SEQUENCE_RULES } from './shared.js';
 import { loadSettings, normalize, pelletCapacity, saveSettings } from './settings.js';
 import { connectView } from './view.js';
 
@@ -6,6 +6,9 @@ const $ = id => document.getElementById(id);
 const play = $('play');
 const step = $('step');
 const reset = $('reset');
+const sequenceButton = $('sequence');
+const formationStatus = $('formation-status');
+const clearFormation = $('clear-formation');
 const settings = $('settings');
 const panel = $('settings-panel');
 const fields = $('settings-fields');
@@ -13,9 +16,10 @@ const error = $('error');
 const progress = $('progress');
 const canvas = $('arena');
 const inputs = {
+  kind: $('arena-kind'),
   engine: $('engine'), mode: $('mode'), size: $('size'), seed: $('seed'),
   wormCount: $('worm-count'), pelletCount: $('pellet-count'), speed: $('speed'),
-  zoom: $('zoom'), scent: $('scent'), room: $('room'),
+  zoom: $('zoom'), scent: $('scent'), room: $('room'), signals: $('signals'), behavior: $('behavior'),
 };
 const directions = ['West', 'East', 'North', 'South'];
 const messages = ['—', 'Open', 'Request', 'Space ticket', 'Occupied', 'Head leads', 'Tail leads', 'Try other end'];
@@ -33,8 +37,10 @@ const pending = new Map();
 let requestId = 0;
 let workerError;
 let limits;
-let rule;
+let rules;
 let config;
+let pattern;
+let sequence;
 let links;
 let tick = 0;
 let ticksPerMove;
@@ -77,7 +83,7 @@ function send(type, fields = {}) {
 }
 
 function viewOptions(settings = config, cell = selected) {
-  return { cell, scent: settings.scent, room: settings.room };
+  return { cell, scent: settings.scent, room: settings.room, signals: settings.signals };
 }
 
 function controls() {
@@ -88,9 +94,16 @@ function controls() {
   play.disabled = step.disabled = busy || !links || Boolean(workerError);
   if (running) step.disabled = true;
   reset.disabled = settings.disabled = fields.disabled = busy || !config || Boolean(workerError);
+  sequenceButton.disabled = reset.disabled;
+  sequenceButton.setAttribute('aria-pressed', String(Boolean(sequence)));
+  clearFormation.disabled = !pattern;
 }
 
 function pause() {
+  if (sequence?.deadline != null) {
+    sequence.remaining = Math.max(0, sequence.deadline - performance.now());
+    sequence.deadline = null;
+  }
   running = false;
   clearTimeout(timer);
   controls();
@@ -103,7 +116,7 @@ function reportError(failure) {
 }
 
 async function operate(action) {
-  if (busy) return;
+  if (busy) return false;
   pause();
   busy = true;
   controls();
@@ -111,9 +124,11 @@ async function operate(action) {
   try {
     await playbackTask;
     await action();
+    return true;
   } catch (failure) {
     reportError(failure);
     if (panel.matches(':popover-open')) panel.hidePopover();
+    return false;
   } finally {
     busy = false;
     if (config) syncSettings();
@@ -121,11 +136,13 @@ async function operate(action) {
   }
 }
 
-function show({ tick: nextTick, mode, metrics, frame }, duration = 0) {
+function show({ tick: nextTick, mode, metrics, frame, pattern: nextPattern }, duration = 0) {
   tick = nextTick;
+  pattern = nextPattern;
   progress.textContent = 'Tick ' + tick.toLocaleString();
   progress.dataset.tick = String(tick);
-  for (const [index, name] of ROOM_MODES.entries()) {
+  if (config.kind === FORMATION_MODE) showFormationStatus();
+  else for (const [index, name] of ROOM_MODES.entries()) {
     const active = name === mode;
     if (active) modeHeaders[index].setAttribute('aria-current', 'true');
     else modeHeaders[index].removeAttribute('aria-current');
@@ -141,10 +158,32 @@ function show({ tick: nextTick, mode, metrics, frame }, duration = 0) {
   showCell(frame);
 }
 
+function showFormationStatus() {
+  const count = config.wormCount.toLocaleString() + ' worms';
+  const next = sequence ? ` · ${sequence.index + 1}/${SEQUENCE_RULES.length}` : '';
+  formationStatus.dataset.rule = pattern?.rule ?? '';
+  formationStatus.dataset.phase = sequence?.resting ? 'reset' : pattern ? 'formation' : 'idle';
+  if (sequence?.resting) {
+    const rule = SEQUENCE_RULES[(sequence.index + 1) % SEQUENCE_RULES.length];
+    formationStatus.textContent = `${count} · Resetting · Next Rule ${rule}`;
+  } else if (pattern) {
+    const boxes = pattern.restricted ? `${pattern.cells_inside.toLocaleString()} cells inside targets`
+      : `${pattern.filled_count.toLocaleString()}/${pattern.target_count.toLocaleString()} boxes filled`;
+    formationStatus.textContent = `${count} · Rule ${pattern.rule}${next} · ${boxes}`;
+  } else {
+    formationStatus.textContent = count;
+  }
+}
+
+function readBits(word, shift, count) {
+  return Math.floor(word / 2 ** shift) % count;
+}
+
 function describePacket(word, phase) {
   const code = word & 7;
-  const worm = (word >>> 3) & 1023;
-  const hop = word >>> 28;
+  const { idCount, roomHopShift } = config.kind === FORMATION_MODE ? limits.formation : { idCount: 1024, roomHopShift: 28 };
+  const worm = readBits(word, 3, idCount);
+  const hop = config.kind === FORMATION_MODE ? readBits(word, roomHopShift, 4) : word >>> roomHopShift;
   if (!code && worm) return hop ? 'Forwarded · ' + worm + ' · hop ' + hop : 'Make room · ' + worm;
   if (phase >= 2 && phase <= 6 && code > 4 && worm) return 'Room relay · ' + worm + ' · hop ' + (code & 3);
   return messages[code] + (worm ? ' · ' + worm : '');
@@ -171,12 +210,13 @@ function showCell(frame) {
 
   const [segment, field, movement, clock] = words;
   const role = segment & 7;
-  const worm = (segment >>> 3) & 1023;
+  const { idCount, headingShift } = config.kind === FORMATION_MODE ? limits.formation : { idCount: 1024, headingShift: 13 };
+  const worm = readBits(segment, 3, idCount);
   const phase = clock & 31;
   const food = (field >>> 6) & 63;
   const waiting = (field >>> 12) & 15;
   const request = words.subarray(4, 8).findIndex(word => (word & 7) === 2);
-  const position = role === 1 ? 'Head · ' + directions[(segment >>> 13) & 3] : role === 5 ? 'Tail' : 'Body ' + role;
+  const position = role === 1 ? 'Head · ' + directions[readBits(segment, headingShift, 4)] : role === 5 ? 'Tail' : 'Body ' + role;
   $('cell-phase').textContent = 'Phase ' + phase;
   $('cell-role').textContent = worm ? 'Worm ' + worm + ' · ' + position : 'Background';
   $('cell-scent').textContent = field & 63;
@@ -221,41 +261,68 @@ function updateSliders() {
 }
 
 function syncSettings() {
-  inputs.size.min = limits.minimumGridSize[config.wormCount];
-  inputs.size.max = limits.maxGridSize;
-  inputs.wormCount.max = limits.maxWorms;
-  inputs.pelletCount.max = pelletCapacity(config.size, config.wormCount, limits);
-  for (const name of ['size', 'seed', 'wormCount', 'pelletCount', 'mode', 'engine', 'zoom']) {
+  const formation = config.kind === FORMATION_MODE;
+  if (!formation) {
+    inputs.size.min = limits.minimumGridSize[config.wormCount];
+    inputs.size.max = limits.maxGridSize;
+    inputs.wormCount.max = limits.maxWorms;
+    inputs.pelletCount.max = pelletCapacity(config.size, config.wormCount, limits);
+  }
+  for (const name of ['kind', 'size', 'seed', 'wormCount', 'pelletCount', 'mode', 'engine', 'zoom', 'behavior']) {
     inputs[name].value = config[name];
   }
   inputs.speed.value = PLAYBACK_SPEEDS.indexOf(config.speed);
   inputs.scent.checked = config.scent;
   inputs.room.checked = config.room;
+  inputs.signals.checked = config.signals;
   for (const key of roomKeys) key.hidden = !config.room;
+  for (const key of [$('vacancy-key'), $('reservation-key')]) key.hidden = !config.signals;
+  for (const field of document.querySelectorAll('[data-autonomous]')) field.hidden = formation;
+  for (const field of document.querySelectorAll('[data-formation]')) field.hidden = !formation;
+  comparison.hidden = formation;
+  sequenceButton.hidden = formationStatus.hidden = !formation;
+  $('arena-title').textContent = formation ? '1D Worm Automata' : 'Make room';
   updateSliders();
 }
 
 async function startArena(next) {
   const result = await send('reset', { config: next, view: viewOptions(next, null) });
+  if (config?.kind !== next.kind || !$('rule-version').textContent) {
+    const rule = rules[next.kind];
+    $('rule-version').textContent = 'v' + rule.version + ' · ' + rule.rows.length + ' rows';
+    $('rule-lookup').textContent = '[' + rule.lookup.join(', ') + ']';
+    $('rule-rows').replaceChildren();
+  }
   config = next;
+  sequence = null;
   links = result.links;
   selected = null;
   view.reset(config.size, config.zoom);
   $('dimensions').textContent = config.size + ' × ' + config.size;
   show(result);
+  fillRuleRows();
   saveSettings(config);
 }
 
 async function changeSetting(name, value) {
+  if (name === 'kind') {
+    await startArena(loadSettings(limits, value));
+    const url = new URL(location.href);
+    if (url.searchParams.has('mode')) {
+      url.searchParams.set('mode', value);
+      history.replaceState(history.state, '', url);
+    }
+    return;
+  }
   const next = normalize({ ...config, [name]: value }, limits);
   if (['size', 'seed', 'wormCount', 'pelletCount'].some(key => next[key] !== config[key])) {
     await startArena(next);
     return;
   }
-  const request = name === 'engine' || name === 'mode' || name === 'scent' || name === 'room';
-  if (request) {
-    const type = name === 'engine' ? 'engine' : name === 'mode' ? 'view' : 'snapshot';
-    const result = await send(type, { engine: next.engine, mode: next.mode, view: viewOptions(next) });
+  const types = { engine: 'engine', mode: 'view', scent: 'snapshot', room: 'snapshot', signals: 'snapshot' };
+  if (Object.hasOwn(types, name) || (name === 'behavior' && pattern)) {
+    const result = name === 'behavior' ? await formationCue('behavior', pattern.rule, next)
+      : await send(types[name], { engine: next.engine, mode: next.mode, view: viewOptions(next) });
     config = next;
     show(result);
   } else {
@@ -264,32 +331,102 @@ async function changeSetting(name, value) {
   saveSettings(config);
 }
 
+function formationCue(command, rule = 0, settings = config) {
+  return send('formation', { cue: { command, rule, behavior: settings.behavior }, view: viewOptions(settings) });
+}
+
+async function alignFormationCue() {
+  const phase = tick % ticksPerMove;
+  if (phase) show(await send('advance', { count: ticksPerMove - phase, view: viewOptions() }));
+}
+
+async function setSequencePhase(index, resting) {
+  const result = await formationCue(resting ? 'clear' : 'retarget', SEQUENCE_RULES[index]);
+  sequence.index = index;
+  sequence.resting = resting;
+  sequence.remaining = resting ? SEQUENCE_RESET_MS : SEQUENCE_RULE_MS;
+  sequence.deadline = running ? performance.now() + sequence.remaining : null;
+  show(result);
+  controls();
+}
+
 function playRound() {
   if (!running || busy || playbackTask) return;
   const started = performance.now();
-  const count = ticksPerMove - tick % ticksPerMove;
   const duration = config.speed === 'max' ? 0 : ROUND_MS / config.speed;
-  playbackTask = send('advance', { count, view: viewOptions() })
-    .then(result => show(result, duration))
+  playbackTask = (async () => {
+    if (sequence?.deadline != null && started >= sequence.deadline) {
+      const index = sequence.resting ? (sequence.index + 1) % SEQUENCE_RULES.length : sequence.index;
+      await setSequencePhase(index, !sequence.resting);
+    }
+    if (running) {
+      const count = ticksPerMove - tick % ticksPerMove;
+      show(await send('advance', { count, view: viewOptions() }), duration);
+    }
+  })()
     .catch(reportError)
     .finally(() => {
       playbackTask = null;
       if (!running) return;
+      const now = performance.now();
+      const delay = Math.min(started + duration, sequence?.deadline ?? Infinity) - now;
       if (duration === 0) playRound();
-      else timer = setTimeout(playRound, Math.max(0, duration - (performance.now() - started)));
+      else timer = setTimeout(playRound, Math.max(0, delay));
     });
+}
+
+function startPlayback() {
+  running = true;
+  if (sequence) sequence.deadline = performance.now() + sequence.remaining;
+  controls();
+  playRound();
 }
 
 play.addEventListener('click', () => {
   if (running) pause();
-  else {
-    running = true;
-    controls();
-    playRound();
-  }
+  else startPlayback();
 });
 step.addEventListener('click', () => operate(async () => show(await send('advance', { count: 1, view: viewOptions() }))));
 reset.addEventListener('click', () => operate(() => startArena(config)));
+sequenceButton.addEventListener('click', async () => {
+  const stopping = Boolean(sequence);
+  const resume = !stopping || running;
+  const changed = await operate(async () => {
+    await alignFormationCue();
+    if (stopping) {
+      sequence = null;
+      show(await formationCue('clear'));
+    } else {
+      sequence = {};
+      await setSequencePhase(0, false);
+    }
+  });
+  if (changed && resume) startPlayback();
+  if (!changed) {
+    sequence = null;
+    controls();
+  }
+});
+for (const rule of SEQUENCE_RULES) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = rule;
+  button.setAttribute('aria-label', `Start Rule ${rule}`);
+  button.addEventListener('click', async () => {
+    if (await operate(async () => {
+      panel.hidePopover();
+      sequence = null;
+      await alignFormationCue();
+      show(await formationCue(rule === 90 ? 'start' : 'retarget', rule));
+    })) startPlayback();
+  });
+  $('rule-picker').append(button);
+}
+clearFormation.addEventListener('click', () => operate(async () => {
+  sequence = null;
+  await alignFormationCue();
+  show(await formationCue('clear'));
+}));
 panel.addEventListener('beforetoggle', event => {
   const open = event.newState === 'open';
   settings.setAttribute('aria-expanded', String(open));
@@ -330,6 +467,7 @@ canvas.addEventListener('keydown', event => {
 
 function fillRuleRows() {
   const body = $('rule-rows');
+  const rule = rules?.[config?.kind];
   if (!ruleTable.open || !rule || body.rows.length) return;
   const rows = document.createDocumentFragment();
   for (const [index, { op, dst, a, b, c }] of rule.rows.entries()) {
@@ -342,10 +480,7 @@ function fillRuleRows() {
 ruleTable.addEventListener('toggle', fillRuleRows);
 
 try {
-  ({ limits, rule, ticksPerMove } = await send('init'));
-  $('rule-version').textContent = 'v' + rule.version + ' · ' + rule.rows.length + ' rows';
-  $('rule-lookup').textContent = '[' + rule.lookup.join(', ') + ']';
-  fillRuleRows();
+  ({ limits, rules, ticksPerMove } = await send('init'));
   config = loadSettings(limits);
   await startArena(config);
 } catch (failure) {

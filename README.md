@@ -69,6 +69,21 @@ static site.
 - Settings are saved in the browser. Each reload starts the saved seed at tick
   zero.
 
+### 1D Worm Automata
+
+Choose **1D Worm Automata** under **Settings → Mode**. The browser arena has a
+350×350 grid, 10,000 five-cell worms, and 300 starting food pellets.
+
+Click **16-rule sequence** to loop through rules 30, 54, 60, 90, 94, 110,
+122, 126, 150, 158, 182, 188, 190, 220, 222, and 250. Each rule runs for five
+seconds. Between rules, formation cues clear for one second while the worms
+keep moving on the same grid. Pause freezes the sequence timer along with the
+simulation. Click the sequence button again to release the current formation.
+
+Each target is a 5×5 tile that can be filled by five worms. Use **Start a rule**
+in Settings to start one rule, or turn on **Show formation signals** to see
+where vacancies are advertised and which lanes are reserved.
+
 ## Checks
 
 ```sh

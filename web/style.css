@@ -58,6 +58,8 @@ h2 { font-size: .95rem; }
 #play[data-playing="true"] .pause { display: initial; }
 #settings { justify-self: end; }
 #settings[aria-expanded="true"] { color: var(--accent); border-color: #38796f; }
+#sequence { width: auto; padding-inline: .65rem; font-size: .8rem; }
+#sequence[aria-pressed="true"] { color: var(--accent); border-color: #38796f; background: #172c2c; }
 
 .simulation {
   display: grid;
@@ -95,6 +97,13 @@ h2 { font-size: .95rem; }
 .request { --key: #ffdd8a; }
 .forwarded { --key: #6be8f4; }
 .yielded { --key: #a4f18c; }
+.vacancy { --key: #65dfcb; }
+.reservation { --key: #bd9dfa; }
+
+.formation-controls { display: grid; gap: .45rem; font-size: .84rem; }
+#rule-picker { display: grid; grid-template-columns: repeat(4, 1fr); gap: .3rem; }
+.formation-controls button { padding: .32rem; border: 1px solid #3b5064; border-radius: .35rem; color: inherit; background: #101720; }
+.formation-controls button:hover:not(:disabled) { border-color: var(--accent); }
 
 .details { display: grid; gap: .75rem; }
 .card { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: .7rem; padding: .85rem; }

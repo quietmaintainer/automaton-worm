@@ -16,6 +16,7 @@ ASSETS = (
     "shared.js",
     "settings.js",
     "view.js",
+    "worm-gpu.js",
     "worker.js",
     "autonomous-worker.js",
     "favicon.svg",

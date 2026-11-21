@@ -85,10 +85,13 @@ async page => {
 
   for (const path of paths) {
     await page.goto(origin + path);
-    await page.evaluate(key => localStorage.removeItem(key), storageKey);
+    await page.evaluate(key => {
+      localStorage.removeItem(key);
+      localStorage.removeItem('automaton-worm:mode');
+    }, storageKey);
     await page.reload();
     await ready(0);
-    check(await page.locator('.toolbar button').count() === 4, 'Expected exactly four toolbar buttons');
+    check(await page.locator('.toolbar button:visible').count() === 4, 'Expected exactly four visible toolbar buttons');
     check(await page.locator('#dimensions').textContent() === '100 × 100', 'Wrong default grid');
     check(await displayedMode() === 'Direct', 'Wrong default arena');
     check(await page.getByRole('button', { name: 'Play', exact: true }).isEnabled(), 'Expected initial pause');
@@ -179,6 +182,36 @@ async page => {
   await settings.click();
   check(await engine.inputValue() === 'mlp', 'Malformed settings did not restore default engine');
 
+  const arenaMode = page.getByRole('combobox', { name: 'Mode', exact: true });
+  await arenaMode.selectOption('worm-automata');
+  await ready(0);
+  check(await page.locator('#dimensions').textContent() === '350 × 350', 'Wrong formation grid');
+  const formation = await arenaState();
+  check(formation.bodies.length === 50_000 && new Set(formation.bodies).size === 50_000,
+    'Expected 10,000 non-overlapping five-cell worms');
+  check(formation.pellets.length === 300, 'Wrong formation food preset');
+  const sequence = page.getByRole('button', { name: '16-rule sequence', exact: true });
+  check(await sequence.isVisible(), 'Sequence button is missing');
+  await page.getByRole('button', { name: 'Start Rule 90', exact: true }).click();
+  await page.locator('#formation-status[data-rule="90"]').waitFor({ state: 'visible' });
+  await page.waitForFunction(() => Number(document.querySelector('#progress').dataset.tick) >= 24);
+  await page.getByRole('button', { name: 'Pause', exact: true }).click();
+  await sequence.click();
+  await page.locator('#formation-status[data-rule="30"]').waitFor({ state: 'visible' });
+  await page.locator('#formation-status[data-phase="reset"]').waitFor({ state: 'visible' });
+  const resetTick = Number(await page.locator('#progress').getAttribute('data-tick'));
+  await page.locator('#formation-status[data-rule="54"]').waitFor({ state: 'visible' });
+  check(Number(await page.locator('#progress').getAttribute('data-tick')) > resetTick,
+    'Worms stopped moving between rules');
+  await sequence.click();
+  await page.locator('#formation-status[data-phase="idle"]').waitFor({ state: 'visible' });
+  check(await sequence.getAttribute('aria-pressed') === 'false', 'The sequence did not stop');
+  await settings.click();
+  await arenaMode.selectOption('autonomous');
+  await ready(0);
+  check(await page.locator('#dimensions').textContent() === '100 × 100', 'Could not return to Autonomous CA');
+  check(await engine.inputValue() === 'mlp', 'Mode switch replaced the original engine setting');
+
   const limited = await page.context().newPage();
   try {
     await limited.addInitScript(() => {
@@ -195,5 +228,5 @@ async page => {
   }
 
   check(failures.length === 0, failures.join('\n'));
-  return { paths, controls: 'passed', storage: 'passed', synchronizedPlayback: 'passed', wasmMime: 'passed', zoomedPointer: 'passed' };
+  return { paths, controls: 'passed', storage: 'passed', synchronizedPlayback: 'passed', wasmMime: 'passed', zoomedPointer: 'passed', formationMode: 'passed', ruleSequence: 'passed' };
 }

@@ -1,3 +1,9 @@
 export const ROOM_MODES = ['off', 'direct', 'wave'];
 export const ENGINE_LABELS = { mlp: 'Optimized MLP', table: 'Compiled table' };
 export const PLAYBACK_SPEEDS = [0.25, 0.5, 1, 1.5, 2, 3, 4, 'max'];
+export const FORMATION_MODE = 'worm-automata';
+export const AUTONOMOUS_MODE = 'autonomous';
+export const FORMATION_BEHAVIORS = ['fill', 'restrict', 'fill-empty'];
+export const SEQUENCE_RULES = [30, 54, 60, 90, 94, 110, 122, 126, 150, 158, 182, 188, 190, 220, 222, 250];
+export const SEQUENCE_RULE_MS = 5_000;
+export const SEQUENCE_RESET_MS = 1_000;

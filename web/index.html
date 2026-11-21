@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Watch three cellular automata with five-cell worms compete for food on the same seed.">
+  <meta name="description" content="Watch five-cell worms forage and organize into elementary cellular automata patterns.">
   <title>Automaton Worm</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./style.css">
@@ -23,6 +23,7 @@
         <button id="reset" type="button" title="Reset" aria-label="Reset" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10a8 8 0 1 0-1.9 7.4M20 4.5V10h-5.5"/></svg>
         </button>
+        <button id="sequence" type="button" aria-pressed="false" hidden disabled>16-rule sequence</button>
       </div>
       <button id="settings" type="button" title="Settings" aria-label="Settings" popovertarget="settings-panel" disabled>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 3-.6 2.6-1.7.9-2.6-.8-2 3.5 2 1.8v2l-2 1.8 2 3.5 2.6-.8 1.7.9L10 21h4l.6-2.6 1.7-.9 2.6.8 2-3.5-2-1.8v-2l2-1.8-2-3.5-2.6.8-1.7-.9L14 3z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -36,6 +37,8 @@
         <footer class="board-footer">
           <div id="legend" class="legend" aria-label="Grid legend">
             <span class="key food">Food</span>
+            <span id="vacancy-key" class="key vacancy" hidden>Vacancy signal</span>
+            <span id="reservation-key" class="key reservation" hidden>Reserved path</span>
             <span class="key request room-key" hidden>Request</span>
             <span class="key forwarded room-key" hidden>Forwarded</span>
             <span class="key yielded room-key" hidden>Yielded</span>
@@ -47,9 +50,10 @@
       <aside class="details">
         <section class="card">
           <div class="card-title">
-            <h2>Make room</h2>
+            <h2 id="arena-title">Make room</h2>
             <span id="progress">Loading…</span>
           </div>
+          <p id="formation-status" class="note" hidden></p>
           <table id="comparison">
             <thead><tr><td></td><th scope="col" data-mode="off">Off</th><th scope="col" data-mode="direct">Direct</th><th scope="col" data-mode="wave">Wave</th></tr></thead>
             <tbody>
@@ -62,7 +66,7 @@
               <tr data-metric="longestStuckRounds"><th scope="row">Longest ongoing wait</th><td>—</td><td>—</td><td>—</td></tr>
             </tbody>
           </table>
-          <p class="note">Waits are measured in rounds.</p>
+          <p class="note" data-autonomous>Waits are measured in rounds.</p>
         </section>
 
         <section id="cell-inspector" class="card">
@@ -116,13 +120,20 @@
       <form id="settings-form">
         <fieldset id="settings-fields" disabled>
           <label class="setting">
+            <span>Mode</span>
+            <select id="arena-kind">
+              <option value="autonomous">Autonomous CA</option>
+              <option value="worm-automata">1D Worm Automata</option>
+            </select>
+          </label>
+          <label class="setting" data-autonomous>
             <span>Simulation engine</span>
             <select id="engine">
               <option value="mlp">Optimized MLP</option>
               <option value="table">Compiled table</option>
             </select>
           </label>
-          <label class="setting">
+          <label class="setting" data-autonomous>
             <span>Display arena</span>
             <select id="mode">
               <option value="off">Off</option>
@@ -130,7 +141,7 @@
               <option value="wave">Wave</option>
             </select>
           </label>
-          <label class="setting"><span>Grid size</span>
+          <label class="setting" data-autonomous><span>Grid size</span>
             <input id="size" type="number" min="33" max="128" value="100" step="1">
           </label>
           <div class="setting seed-setting">
@@ -140,10 +151,10 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8.5 8.5h.01m3.49 3.5h.01m3.49 3.5h.01" stroke-width="2.5"/></svg>
             </button>
           </div>
-          <label class="setting slider"><span>Worms</span><output id="worm-count-value" for="worm-count">100</output>
+          <label class="setting slider" data-autonomous><span>Worms</span><output id="worm-count-value" for="worm-count">100</output>
             <input id="worm-count" type="range" min="1" max="1000" value="100">
           </label>
-          <label class="setting slider"><span>Food pellets</span><output id="pellet-count-value" for="pellet-count">32</output>
+          <label class="setting slider" data-autonomous><span>Food pellets</span><output id="pellet-count-value" for="pellet-count">32</output>
             <input id="pellet-count" type="range" min="1" max="32" value="32">
           </label>
           <label class="setting slider"><span>Playback speed</span><output id="speed-value" for="speed">1×</output>
@@ -153,7 +164,21 @@
             <input id="zoom" type="range" min="100" max="800" value="100">
           </label>
           <label class="setting toggle"><input id="scent" type="checkbox"><span>Show food scent</span></label>
-          <label class="setting toggle"><input id="room" type="checkbox"><span>Show make-room signals</span></label>
+          <label class="setting toggle" data-autonomous><input id="room" type="checkbox"><span>Show make-room signals</span></label>
+          <label class="setting toggle" data-formation hidden><input id="signals" type="checkbox"><span>Show formation signals</span></label>
+          <label class="setting" data-formation hidden>
+            <span>Formation behavior</span>
+            <select id="behavior">
+              <option value="fill">Fill with worms</option>
+              <option value="restrict">Keep worms out</option>
+              <option value="fill-empty">Fill empty space</option>
+            </select>
+          </label>
+          <div class="formation-controls" data-formation hidden>
+            <span id="rule-picker-label">Start a rule</span>
+            <div id="rule-picker" role="group" aria-labelledby="rule-picker-label"></div>
+            <button id="clear-formation" type="button">Clear formation</button>
+          </div>
         </fieldset>
       </form>
     </section>

@@ -39,11 +39,11 @@ pub enum Opcode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Row {
+pub struct Row<W = u32> {
     pub op: Opcode,
     pub dst: u32,
     #[serde(default)]
-    pub a: u32,
+    pub a: W,
     #[serde(default)]
     pub b: u32,
     #[serde(default)]
@@ -51,20 +51,23 @@ pub struct Row {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RuleDefinition {
+#[serde(
+    deny_unknown_fields,
+    bound(deserialize = "W: Deserialize<'de> + Default")
+)]
+pub struct RuleDefinition<W = u32> {
     pub version: u32,
-    pub rows: Vec<Row>,
+    pub rows: Vec<Row<W>>,
     #[serde(default)]
     pub lookup: Vec<u32>,
 }
 
 /// Validated, immutable program shared by every site in a simulation.
 #[derive(Clone, Debug)]
-pub struct RuleTable(RuleDefinition);
+pub struct RuleTable<W = u32>(RuleDefinition<W>);
 
-impl RuleTable {
-    pub fn new(definition: RuleDefinition) -> Result<Self> {
+impl<W: Copy + Into<u64>> RuleTable<W> {
+    pub(crate) fn with_word_size(definition: RuleDefinition<W>) -> Result<Self> {
         ensure!(
             definition.version == RULE_VERSION,
             "unsupported rule version {}",
@@ -78,7 +81,7 @@ impl RuleTable {
             definition.lookup.len() <= 65_536,
             "lookup table exceeds 65,536 words"
         );
-        let register = |index| (index as usize) < register::COUNT;
+        let register = |index: u64| index < register::COUNT as u64;
         for (i, &Row { op, dst, a, b, c }) in definition.rows.iter().enumerate() {
             ensure!(
                 (register::MEMORY..register::COUNT).contains(&(dst as usize)),
@@ -86,26 +89,32 @@ impl RuleTable {
             );
             let valid = match op {
                 Opcode::Constant => b == 0 && c == 0,
-                Opcode::Copy => register(a) && b == 0 && c == 0,
-                Opcode::Select => register(a) && register(b) && register(c),
+                Opcode::Copy => register(a.into()) && b == 0 && c == 0,
+                Opcode::Select => register(a.into()) && register(b.into()) && register(c.into()),
                 Opcode::Lookup => {
-                    register(a)
+                    register(a.into())
                         && c > 0
                         && u64::from(b) + u64::from(c) <= definition.lookup.len() as u64
                 }
-                _ => register(a) && register(b) && c == 0,
+                _ => register(a.into()) && register(b.into()) && c == 0,
             };
             ensure!(valid, "invalid operands in row {i} ({op:?})");
         }
         Ok(Self(definition))
     }
 
-    pub fn from_json(json: &str) -> Result<Self> {
-        Self::new(serde_json::from_str(json).context("invalid rule table JSON")?)
+    pub fn definition(&self) -> &RuleDefinition<W> {
+        &self.0
+    }
+}
+
+impl RuleTable {
+    pub fn new(definition: RuleDefinition) -> Result<Self> {
+        Self::with_word_size(definition)
     }
 
-    pub fn definition(&self) -> &RuleDefinition {
-        &self.0
+    pub fn from_json(json: &str) -> Result<Self> {
+        Self::new(serde_json::from_str(json).context("invalid rule table JSON")?)
     }
 
     pub(crate) fn update(&self, input: u32, inbox: [u32; PORTS], previous: CellState) -> CellState {

@@ -5,6 +5,25 @@ pub const MAX_GRID_SIZE: usize = 128;
 
 pub(crate) type Body = [usize; WORM_LENGTH];
 
+pub(crate) fn initial_pellets(
+    cells: usize,
+    bodies: &[Body],
+    count: usize,
+    seed: &mut u32,
+) -> Vec<usize> {
+    let mut occupied = vec![false; cells];
+    for &cell in bodies.iter().flatten() {
+        occupied[cell] = true;
+    }
+    let mut available: Vec<_> = (0..cells).filter(|&cell| !occupied[cell]).collect();
+    (0..count)
+        .map(|_| {
+            let index = crate::world::random_index(seed, available.len());
+            available.swap_remove(index)
+        })
+        .collect()
+}
+
 const CORNER_BODY: [(usize, usize); WORM_LENGTH] = [(1, 1), (1, 0), (0, 0), (0, 1), (0, 2)];
 const FIRST_LANE_SIZE: usize = 11;
 

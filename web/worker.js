@@ -1,5 +1,5 @@
-import init, { AutonomousWorm, arenaLimits } from './pkg/worm.js';
-import { ENGINE_LABELS, ROOM_MODES } from './shared.js';
+import init, { AutonomousWorm, FormationWorm, arenaLimits } from './pkg/worm.js';
+import { AUTONOMOUS_MODE, ENGINE_LABELS, FORMATION_MODE, ROOM_MODES } from './shared.js';
 
 let wasmModule;
 let limits;
@@ -51,7 +51,7 @@ function close(arena) {
 }
 
 async function gather(arena, message, expectedTick, view) {
-  const replies = await Promise.all(ROOM_MODES.map(async mode => {
+  const replies = await Promise.all(Object.keys(arena.workers).map(async mode => {
     const response = await arena.workers[mode].send({
       ...message, mode, view: mode === arena.mode ? view ?? {} : null,
     });
@@ -65,23 +65,31 @@ async function gather(arena, message, expectedTick, view) {
     engine: arena.engine,
     frame: byMode[arena.mode].frame,
     links: byMode[arena.mode].links,
+    pattern: byMode[arena.mode].pattern,
     metrics: Object.fromEntries(replies.map(([mode, result]) => [mode, result.metrics])),
   };
 }
 
-async function handle({ type, config, engine, mode, count, view }) {
+async function handle({ type, config, engine, mode, count, view, cue }) {
   if (type === 'init') {
     await load();
-    return { limits, rule: JSON.parse(AutonomousWorm.ruleJson()), ticksPerMove: AutonomousWorm.ticksPerMove() };
+    return {
+      limits, ticksPerMove: AutonomousWorm.ticksPerMove(),
+      rules: {
+        [AUTONOMOUS_MODE]: JSON.parse(AutonomousWorm.ruleJson()),
+        [FORMATION_MODE]: JSON.parse(FormationWorm.ruleJson()),
+      },
+    };
   }
   if (type === 'reset') {
     await load();
     if (!ROOM_MODES.includes(config.mode) || !Object.hasOwn(ENGINE_LABELS, config.engine)) {
       throw new Error('Unknown arena or engine');
     }
-    const next = { mode: config.mode, engine: config.engine, workers: {}, tick: 0 };
+    const formation = config.kind === FORMATION_MODE;
+    const next = { mode: formation ? 'wave' : config.mode, engine: config.engine, formation, workers: {}, tick: 0 };
     try {
-      for (const room of ROOM_MODES) next.workers[room] = openArena();
+      for (const room of formation ? ['wave'] : ROOM_MODES) next.workers[room] = openArena();
       const reply = await gather(next, { type: 'init', config, module: wasmModule }, 0, view);
       close(active);
       active = next;
@@ -95,16 +103,17 @@ async function handle({ type, config, engine, mode, count, view }) {
   if (type === 'advance' && (!Number.isInteger(count) || count < 1 || count > 0xffffffff - active.tick)) {
     throw new Error('Invalid tick count');
   }
-  if (type === 'view' && !ROOM_MODES.includes(mode)) throw new Error('Unknown arena');
-  if (type === 'engine' && !Object.hasOwn(ENGINE_LABELS, engine)) throw new Error('Unknown engine');
-  if (!['advance', 'engine', 'view', 'snapshot'].includes(type)) throw new Error('Unknown request');
+  if (type === 'view' && !Object.hasOwn(active.workers, mode)) throw new Error('Unknown arena');
+  if (type === 'engine' && (active.formation || !Object.hasOwn(ENGINE_LABELS, engine))) throw new Error('Unknown engine');
+  if (type === 'formation' && !active.formation) throw new Error('Choose 1D Worm Automata to cue a formation');
+  if (!['advance', 'engine', 'view', 'snapshot', 'formation'].includes(type)) throw new Error('Unknown request');
   const tick = active.tick + (type === 'advance' ? count : 0);
 
-  // Publish a frame only after all three workers report the same expected tick.
+  // Publish a frame only after all active workers report the expected tick.
   if (type === 'view') active.mode = mode;
   if (type === 'engine') active.engine = engine;
   try {
-    const reply = await gather(active, { type: type === 'view' ? 'snapshot' : type, count, engine }, tick, view);
+    const reply = await gather(active, { type: type === 'view' ? 'snapshot' : type, count, engine, cue }, tick, view);
     active.tick = tick;
     return reply;
   } catch (error) {

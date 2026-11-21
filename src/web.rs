@@ -2,6 +2,8 @@ use bytemuck::cast_slice;
 use wasm_bindgen::prelude::*;
 
 use crate::autonomous::{AutonomousArena, ROUND_TICKS, RULE_JSON, RoomMode};
+use crate::formation_arena::{self, FormationArena, WormFormationBehavior, WormFormationCue};
+use crate::formation_protocol;
 use crate::spawn::{MAX_GRID_SIZE, MAX_PELLETS, MAX_WORMS, WORM_LENGTH, minimum_size};
 use crate::{CellState, MEMORY_WORDS, PORTS};
 
@@ -17,6 +19,14 @@ pub fn arena_limits() -> String {
         "maxPellets": MAX_PELLETS,
         "wormLength": WORM_LENGTH,
         "minimumGridSize": (0..=MAX_WORMS).map(minimum_size).collect::<Vec<_>>(),
+        "formation": {
+            "size": formation_arena::BROWSER_GRID_SIZE,
+            "wormCount": formation_arena::BROWSER_WORMS,
+            "pelletCount": formation_arena::BROWSER_PELLETS,
+            "idCount": (formation_protocol::ID_MASK >> 3) + 1,
+            "headingShift": formation_protocol::HEADING_SHIFT,
+            "roomHopShift": formation_protocol::ROOM_HOP_SHIFT,
+        },
     })
     .to_string()
 }
@@ -194,4 +204,110 @@ fn grid_cell_words(cells: &[CellState], size: usize, index: usize) -> Option<Vec
     );
     words.push(cell.answer);
     Some(words)
+}
+
+#[wasm_bindgen]
+pub struct FormationWorm(FormationArena);
+
+#[wasm_bindgen]
+impl FormationWorm {
+    #[wasm_bindgen(constructor)]
+    pub fn new(seed: u32) -> Result<Self, JsValue> {
+        FormationArena::browser(seed).map(Self).map_err(js_error)
+    }
+
+    pub fn advance(&mut self, ticks: u32) -> Result<(), JsValue> {
+        self.0.advance(ticks).map_err(js_error)
+    }
+
+    pub fn tick(&self) -> u32 {
+        self.0.tick()
+    }
+
+    #[wasm_bindgen(js_name = ruleJson)]
+    pub fn rule_json() -> String {
+        include_str!(concat!(env!("OUT_DIR"), "/worm_formation_rule.json")).into()
+    }
+
+    pub fn cue(&mut self, command: &str, rule: u8, behavior: &str) -> Result<(), JsValue> {
+        let behavior = match behavior {
+            "fill" => WormFormationBehavior::Fill,
+            "restrict" => WormFormationBehavior::Restrict,
+            "fill-empty" => WormFormationBehavior::FillEmpty,
+            _ => return Err(js_error("Unknown formation behavior")),
+        };
+        let cue = match command {
+            "start" => WormFormationCue::Start { rule: Some(rule) },
+            "retarget" => WormFormationCue::Retarget { rule },
+            "clear" => WormFormationCue::Clear,
+            "behavior" => {
+                return self
+                    .0
+                    .cue_worm_formation(WormFormationCue::Behavior(behavior))
+                    .map_err(js_error);
+            }
+            _ => return Err(js_error("Unknown formation cue")),
+        };
+        self.0
+            .cue_with_behavior(cue, Some(behavior))
+            .map_err(js_error)
+    }
+
+    #[wasm_bindgen(js_name = patternJson)]
+    pub fn pattern_json(&self) -> Result<String, JsValue> {
+        serde_json::to_string(&self.0.worm_pattern_overview()).map_err(js_error)
+    }
+
+    pub fn passages(&self) -> Box<[u8]> {
+        self.0.links().collect()
+    }
+
+    pub fn bodies(&self) -> Box<[u32]> {
+        self.0
+            .bodies()
+            .iter()
+            .flatten()
+            .map(|&site| site as u32)
+            .collect()
+    }
+
+    pub fn headings(&self) -> Box<[u8]> {
+        self.0.headings().collect()
+    }
+
+    pub fn pellets(&self) -> Box<[u32]> {
+        self.0.pellets().map(|site| site as u32).collect()
+    }
+
+    #[wasm_bindgen(js_name = scentField)]
+    pub fn scent_field(&self) -> Box<[u8]> {
+        self.0.scent().collect()
+    }
+
+    #[wasm_bindgen(js_name = cellDetails)]
+    pub fn cell_details(&self, index: u32) -> Option<Box<[f64]>> {
+        // The packed words fit within the exact integer range of a JS number.
+        Some(
+            self.0
+                .cell_words(index as usize)?
+                .into_iter()
+                .map(|word| word as f64)
+                .collect(),
+        )
+    }
+
+    #[wasm_bindgen(js_name = heldWorms)]
+    pub fn held_worms(&self) -> Box<[u32]> {
+        self.0.held_worms().collect()
+    }
+
+    #[wasm_bindgen(js_name = vacancySignals)]
+    pub fn vacancy_signals(&self) -> Box<[u32]> {
+        self.0.vacancy_signals(1500).flatten().collect()
+    }
+
+    #[wasm_bindgen(js_name = reservationPaths)]
+    pub fn reservation_paths(&self) -> Box<[u32]> {
+        self.0.reservation_paths(4000).into_boxed_slice()
+    }
 }

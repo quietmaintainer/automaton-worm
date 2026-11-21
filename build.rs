@@ -20,6 +20,12 @@ mod rule_mlp;
 mod autonomous_protocol;
 #[path = "rules/worm-autonomous.rs"]
 mod autonomous_rule;
+#[allow(dead_code)]
+#[path = "src/formation_protocol.rs"]
+mod formation_protocol;
+#[path = "rules/worm-formations.rs"]
+mod formation_rule;
+
 fn main() {
     for path in [
         "src/rules.rs",
@@ -28,6 +34,8 @@ fn main() {
         "build/rule_mlp.rs",
         "src/autonomous_protocol.rs",
         "rules/worm-autonomous.rs",
+        "src/formation_protocol.rs",
+        "rules/worm-formations.rs",
     ] {
         println!("cargo:rerun-if-changed={path}");
     }
@@ -43,23 +51,45 @@ fn main() {
 
     let mut source = String::new();
     write_update(&mut source, &table);
-    fs::write(output.join("worm_autonomous_rule.rs"), source).unwrap();
+    fs::write(output.join("worm_autonomous_rule.rs"), &source).unwrap();
     fs::write(
         output.join("worm_autonomous_rule.json"),
         serde_json::to_vec(table.definition()).unwrap(),
     )
     .unwrap();
+
+    source.clear();
+    let formations = formation_rule::table();
+    write_update(&mut source, &formations);
+    fs::write(output.join("worm_formation_rule.rs"), source).unwrap();
+    fs::write(
+        output.join("worm_formation_rule.json"),
+        serde_json::to_vec(formations.definition()).unwrap(),
+    )
+    .unwrap();
 }
 
-fn write_update(source: &mut String, table: &RuleTable) {
-    source.push_str(
-        "#[inline]\npub(super) fn update(input: u32, inbox: [u32; PORTS], previous: CellState) -> CellState {\n",
-    );
+fn write_update<W: Copy + Into<u64>>(source: &mut String, table: &RuleTable<W>) {
+    let wide = size_of::<W>() == size_of::<u64>();
+    let (word, name) = if wide {
+        ("u64", "update_at_phase<const PHASE: u32>")
+    } else {
+        ("u32", "update")
+    };
+    writeln!(source, "#[inline]\npub(super) fn {name}(input: u32, inbox: [{word}; PORTS], previous: CellState) -> CellState {{").unwrap();
+    if wide {
+        source.push_str(
+            "let input = u64::from(input);\n\
+            let mask = super::PHASE_MASK as u32;\n\
+            debug_assert_eq!(previous.memory[3] & mask, PHASE);\n\
+            let clock = (previous.memory[3] & !mask) | PHASE;\n",
+        );
+    }
     let lookup = &table.definition().lookup;
     if !lookup.is_empty() {
         writeln!(
             source,
-            "const LOOKUP: [u32; {}] = {lookup:?};",
+            "const LOOKUP: [{word}; {}] = {lookup:?};",
             lookup.len()
         )
         .unwrap();
@@ -68,23 +98,39 @@ fn write_update(source: &mut String, table: &RuleTable) {
     // Give each write a fresh value so LLVM can remove copies, fold constants,
     // and schedule operations without an opcode dispatch or a register array.
     use rules::register::*;
-    let mut registers: [String; COUNT] = std::array::from_fn(|_| "0u32".into());
+    let mut registers: [String; COUNT] = std::array::from_fn(|_| format!("0{word}"));
     registers[INPUT] = "input".into();
     for port in 0..PORTS {
         registers[INBOX + port] = format!("inbox[{port}]");
     }
     for word in 0..MEMORY_WORDS {
-        registers[MEMORY + word] = format!("previous.memory[{word}]");
+        let value = format!("previous.memory[{word}]");
+        registers[MEMORY + word] = if wide {
+            format!("u64::from({value})")
+        } else {
+            value
+        };
+    }
+    if wide {
+        registers[MEMORY + MEMORY_WORDS - 1] = "u64::from(clock)".into();
     }
     registers[ANSWER] = "previous.answer".into();
     for (row, instruction) in table.definition().rows.iter().enumerate() {
         let read = |index: u32| &registers[index as usize];
-        let a = || read(instruction.a);
+        let literal = instruction.a.into();
+        let a = || read(literal as u32);
         let b = || read(instruction.b);
         let c = || read(instruction.c);
+        let shift = || {
+            if wide {
+                format!("{} as u32", b())
+            } else {
+                b().clone()
+            }
+        };
         use rules::Opcode::*;
         let expression = match instruction.op {
-            Constant => format!("{}u32", instruction.a),
+            Constant => format!("{literal}{word}"),
             Copy => a().clone(),
             Add => format!("{}.wrapping_add({})", a(), b()),
             Subtract => format!("{}.wrapping_sub({})", a(), b()),
@@ -92,10 +138,10 @@ fn write_update(source: &mut String, table: &RuleTable) {
             And => format!("{} & {}", a(), b()),
             Or => format!("{} | {}", a(), b()),
             Xor => format!("{} ^ {}", a(), b()),
-            ShiftLeft => format!("{}.wrapping_shl({})", a(), b()),
-            ShiftRight => format!("{}.wrapping_shr({})", a(), b()),
-            Equal => format!("u32::from({} == {})", a(), b()),
-            LessThan => format!("u32::from({} < {})", a(), b()),
+            ShiftLeft => format!("{}.wrapping_shl({})", a(), shift()),
+            ShiftRight => format!("{}.wrapping_shr({})", a(), shift()),
+            Equal => format!("{word}::from({} == {})", a(), b()),
+            LessThan => format!("{word}::from({} < {})", a(), b()),
             Select => format!("if {} != 0 {{ {} }} else {{ {} }}", c(), a(), b()),
             Lookup => format!(
                 "if {} < {} {{ LOOKUP[({} + {}) as usize] }} else {{ 0 }}",
@@ -110,10 +156,20 @@ fn write_update(source: &mut String, table: &RuleTable) {
         registers[instruction.dst as usize] = name;
     }
 
+    let memory = registers[MEMORY..OUTBOX]
+        .iter()
+        .map(|value| {
+            if wide {
+                format!("{value} as u32")
+            } else {
+                value.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     writeln!(
         source,
-        "CellState {{ memory: [{}], outbox: [{}], answer: {} }}\n}}",
-        registers[MEMORY..OUTBOX].join(", "),
+        "CellState {{ memory: [{memory}], outbox: [{}], answer: {} }}\n}}",
         registers[OUTBOX..ANSWER].join(", "),
         registers[ANSWER]
     )

@@ -4,6 +4,9 @@ pub mod autonomous;
 // The build-time rule assembler and runtime each use a subset of the protocol.
 #[allow(dead_code)]
 mod autonomous_protocol;
+pub mod formation_arena;
+#[allow(dead_code)]
+mod formation_protocol;
 mod rule_mlp;
 mod rules;
 pub mod spawn;

@@ -12,7 +12,9 @@ use crate::{
 };
 
 use crate::autonomous_protocol::*;
-use crate::spawn::{Body, MAX_GRID_SIZE, MAX_PELLETS, WORM_LENGTH, initial_bodies, worm_capacity};
+use crate::spawn::{
+    Body, MAX_GRID_SIZE, MAX_PELLETS, WORM_LENGTH, initial_bodies, initial_pellets, worm_capacity,
+};
 
 pub const ROUND_TICKS: u32 = TICKS_PER_MOVE;
 pub const RULE_JSON: &str = include_str!(concat!(env!("OUT_DIR"), "/worm_autonomous_rule.json"));
@@ -128,17 +130,7 @@ impl AutonomousArena {
             "choose from one to {capacity} pellets"
         );
         let bodies = initial_bodies(size, count);
-        let mut occupied = vec![false; cell_count];
-        for &cell in bodies.iter().flatten() {
-            occupied[cell] = true;
-        }
-        let mut available: Vec<_> = (0..cell_count).filter(|&cell| !occupied[cell]).collect();
-        let pellets: Vec<_> = (0..pellet_count)
-            .map(|_| {
-                let index = random_index(&mut seed, available.len());
-                available.swap_remove(index)
-            })
-            .collect();
+        let pellets = initial_pellets(cell_count, &bodies, pellet_count, &mut seed);
         let mut world = seeded_world(size, seed, &bodies, &pellets)?;
         room_mode.seed(&mut world);
         Ok(Self::new(world, size, bodies))
