@@ -25,9 +25,14 @@
         </button>
         <button id="sequence" type="button" aria-pressed="false" hidden disabled>16-rule sequence</button>
       </div>
-      <button id="settings" type="button" title="Settings" aria-label="Settings" popovertarget="settings-panel" disabled>
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 3-.6 2.6-1.7.9-2.6-.8-2 3.5 2 1.8v2l-2 1.8 2 3.5 2.6-.8 1.7.9L10 21h4l.6-2.6 1.7-.9 2.6.8 2-3.5-2-1.8v-2l2-1.8-2-3.5-2.6.8-1.7-.9L14 3z"/><circle cx="12" cy="12" r="3"/></svg>
-      </button>
+      <div class="toolbar-actions">
+        <a href="https://github.com/quietmaintainer/automaton-worm" target="_blank" rel="noopener noreferrer" title="View source on GitHub" aria-label="View source on GitHub">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M6 7v10m12-10v1a5 5 0 0 1-5 5H6"/></svg>
+        </a>
+        <button id="settings" type="button" title="Settings" aria-label="Settings" popovertarget="settings-panel" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 3-.6 2.6-1.7.9-2.6-.8-2 3.5 2 1.8v2l-2 1.8 2 3.5 2.6-.8 1.7.9L10 21h4l.6-2.6 1.7-.9 2.6.8 2-3.5-2-1.8v-2l2-1.8-2-3.5-2.6.8-1.7-.9L14 3z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
     </header>
 
     <p id="error" class="error" role="alert" hidden></p>
